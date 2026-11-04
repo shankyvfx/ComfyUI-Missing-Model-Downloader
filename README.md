@@ -2,6 +2,10 @@
 
 Review, download and manage the models used by your current workflow.
 
+## Quick installation guide
+
+![Installation guide](docs/installation-guide.jpg)
+
 ## Install
 
 1. Download this repository as a ZIP and extract it.
