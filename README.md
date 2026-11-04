@@ -5,7 +5,7 @@ Review, download and manage the models used by your current workflow.
 ## Install
 
 1. Download this repository as a ZIP and extract it.
-2. Put the `workflow-model-installer` folder inside `ComfyUI/custom_nodes`.
+2. Move the extracted extension folder (for example, `ComfyUI-Missing-Model-Downloader-main`) into `ComfyUI/custom_nodes`. Make sure `__init__.py` and `web/` are directly inside that folder, with no extra nested extension folder.
 3. Restart ComfyUI, then hard-refresh your browser (Ctrl+F5).
 4. Open a workflow and click **Workflow Models** in the left sidebar.
 
