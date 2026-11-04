@@ -41,7 +41,7 @@ This extension does not edit workflow nodes or connections. Models stay in norma
 
 ## Availability
 
-This is a private preview. No public open-source license has been selected yet.
+This repository is currently private.
 
 ## Development
 
@@ -51,3 +51,7 @@ Frontend checks: `node tests/test_frontend.cjs` and `node tests/test_progress.cj
 
 Tests use sample files and mocked services, not real model downloads. Live service availability and every custom workflow are not covered.
 
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
