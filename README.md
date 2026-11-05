@@ -23,6 +23,12 @@ No model weights download without approval. Metadata lookups and source searches
 
 Downloads use the model role to select the configured ComfyUI folder. Existing files are skipped. Progress, downloaded bytes and remaining models remain available while the panel is hidden. Closing the panel does not stop downloads; stopping ComfyUI does. Failed or cancelled downloads must be retried; partial-download resume is not supported.
 
+## Import models downloaded in your browser
+
+If Hugging Face denies access, open **Source & destination → Open on Hugging Face** on the missing model. Failed Hugging Face downloads also show a link when access is denied. Sign in on Hugging Face and request model access if needed, then download the files into one local folder.
+
+In **Workflow Models → Missing → Import from folder**, paste the full folder path and click **Preview files**. The preview matches exact filenames in that folder and shows each destination. Click **Approve & copy files** to install them. Originals are kept, and existing models are not overwritten. Folder import is available from the ComfyUI computer only. The extension does not use your browser login or ask for a token.
+
 ## Manage installed models
 
 The **Installed** tab lists installed models used by this workflow. **Open folder** opens the actual containing folder. Select models or use a card's Recycle Bin icon to review a removal confirmation. Files are moved only after confirmation. Other workflows may use the same files. Restore removed files through Windows Recycle Bin when needed.

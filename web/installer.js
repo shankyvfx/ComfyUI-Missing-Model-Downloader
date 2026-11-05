@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { createDownloadPanel } from "./progress.js?v=20261104-charcoal-theme";
+import { createDownloadPanel } from "./progress.js?v=20261105-folder-import";
 
 function installStyles() {
     if (document.getElementById("workflow-model-installer-style")) return;
@@ -56,9 +56,16 @@ function workflowModels(workflow) {
             }
             collect(value.widgets_values);
             const folders = { CheckpointLoaderSimple: "checkpoints", CheckpointLoader: "checkpoints", UNETLoader: "diffusion_models", CLIPLoader: "text_encoders", DualCLIPLoader: "text_encoders", TripleCLIPLoader: "text_encoders", QuadrupleCLIPLoader: "text_encoders", VAELoader: "vae", LoraLoader: "loras", LoraLoaderModelOnly: "loras", ControlNetLoader: "controlnet", CLIPVisionLoader: "clip_vision", UpscaleModelLoader: "upscale_models" };
+            const linkedWidgets = new Set((value.inputs || [])
+                .filter(input => input.link != null)
+                .map(input => input.widget?.name || input.name));
+            const namedWidgets = Object.entries(value.widgets_values_named ||
+                (Array.isArray(value.widgets_values) ? {} : value.widgets_values));
             for (const filename of values) {
+                const matchingWidgets = namedWidgets.filter(([, current]) => current === filename);
                 const name = filename.replaceAll("\\", "/").split("/").pop();
                 const metadata = value.properties?.models?.find(model => model.name === name);
+                if (!metadata && !folders[value.type] && matchingWidgets.length && matchingWidgets.every(([name]) => linkedWidgets.has(name))) continue;
                 const model = metadata || { name, directory: folders[value.type] || "", url: "" };
                 models.set(`${model.directory}/${name}`, model);
             }

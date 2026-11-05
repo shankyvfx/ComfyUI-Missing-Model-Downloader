@@ -112,6 +112,43 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(completed.exception.value.status, 403)
             launch.assert_not_called()
 
+    def test_local_import_preview_and_copy(self):
+        download_temp = tempfile.TemporaryDirectory(dir=ROOT.parent)
+        self.addCleanup(download_temp.cleanup)
+        downloads = Path(download_temp.name)
+        source = downloads / self.model["name"]
+        header = b'{"__metadata__":{}}'
+        data = struct.pack("<Q", len(header)) + header
+        source.write_bytes(data)
+        target = self.folder / self.model["name"]
+        model = {**self.model, "url": ""}
+        preview = installer.prepare_import(str(downloads), [model])
+        self.assertEqual(preview["items"][0]["destination"], str(target.resolve()))
+        self.assertFalse(target.exists())
+        result = installer.confirm_import(preview["token"])
+        self.assertEqual(result["items"][0]["status"], "installed")
+        self.assertEqual(target.read_bytes(), data)
+        self.assertEqual(source.read_bytes(), data)
+        self.assertEqual(installer.prepare_import(str(downloads), [model])["items"], [])
+        with self.assertRaises(ValueError):
+            installer.confirm_import(preview["token"])
+
+    def test_import_preserves_existing_and_rejects_changed_source(self):
+        download_temp = tempfile.TemporaryDirectory(dir=ROOT.parent)
+        self.addCleanup(download_temp.cleanup)
+        downloads = Path(download_temp.name)
+        source = downloads / self.model["name"]
+        source.write_bytes(b"first")
+        target = self.folder / self.model["name"]
+        preview = installer.prepare_import(str(downloads), [self.model])
+        source.write_bytes(b"different")
+        self.assertEqual(installer.confirm_import(preview["token"])["items"][0]["status"], "failed")
+        self.assertFalse(target.exists())
+        preview = installer.prepare_import(str(downloads), [self.model])
+        target.write_bytes(b"existing")
+        self.assertEqual(installer.confirm_import(preview["token"])["items"][0]["status"], "skipped")
+        self.assertEqual(target.read_bytes(), b"existing")
+
     def test_download_atomic_and_invalid_file(self):
         header = json.dumps({"__metadata__": {}}).encode()
         valid = struct.pack("<Q", len(header)) + header

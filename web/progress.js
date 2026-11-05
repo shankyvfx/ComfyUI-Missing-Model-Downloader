@@ -286,6 +286,86 @@ export function createDownloadPanel({ app, request, workflowModels, element, for
     element("span", provider, source);
     }
 
+    function hugFaceLink(item, parent) {
+        let url;
+        try { url = new URL(item.url); } catch { return; }
+        if (url.origin !== "https://huggingface.co" || url.username || url.password || !url.pathname.includes("/resolve/")) return;
+        url.pathname = url.pathname.replace("/resolve/", "/blob/");
+        url.search = "";
+        url.hash = "";
+        const link = element("a", "Open on Hugging Face ↗", parent);
+        link.href = url.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+    }
+
+    function showImport(models) {
+        view = "confirm";
+        header("Import from folder", "Enter the folder on this computer containing the downloaded files. Originals are kept.");
+        const form = element("div", "", content);
+        form.className = "wm-summary wm-source-controls";
+        const folder = element("input", "", form);
+        folder.type = "text";
+        folder.placeholder = "Paste the full download folder path";
+        folder.setAttribute("aria-label", "Downloaded model folder path");
+        const preview = element("button", "Preview files", form);
+        const message = element("div", "", content);
+        message.className = "wm-summary";
+        message.setAttribute("role", "status");
+        const list = element("div", "", content);
+        const footer = element("div", "", content);
+        footer.className = "wm-foot";
+        const approve = element("button", "Approve & copy files", footer);
+        approve.className = "wm-primary";
+        approve.disabled = true;
+        const back = element("button", "Back to workflow", footer);
+        back.onclick = () => reviewWorkflow();
+        let token;
+        folder.oninput = () => {
+            token = undefined;
+            approve.disabled = true;
+            list.replaceChildren();
+        };
+        preview.onclick = async () => {
+            token = undefined;
+            approve.disabled = true;
+            preview.disabled = folder.disabled = true;
+            list.replaceChildren();
+            message.textContent = "Checking filenames…";
+            try {
+                const plan = await request("import-plan", { folder: folder.value.trim().replace(/^"(.*)"$/, "$1"), models });
+                token = plan.token;
+                for (const item of plan.items) {
+                    const row = element("div", "", list);
+                    row.className = "wm-row";
+                    element("strong", item.name, row);
+                    element("div", formatSize(item.size), row).className = "wm-size";
+                    element("div", `From: ${item.source_path}`, row).className = "wm-folder";
+                    element("div", `To: ${item.destination}`, row).className = "wm-folder";
+                }
+                message.textContent = token ? "Review the destination folders before copying." : "No matching missing models found. Check the exact filenames in this folder.";
+                approve.disabled = !token;
+            } catch (error) { message.textContent = error.message; }
+            finally { preview.disabled = folder.disabled = false; }
+        };
+        approve.onclick = async () => {
+            if (!token) return;
+            approve.disabled = back.disabled = preview.disabled = folder.disabled = true;
+            message.textContent = "Copying model files…";
+            try {
+                const result = await request("import-confirm", { approved: true, token });
+                message.textContent = result.items.map(item => `${item.name}: ${item.status}${item.error ? ` — ${item.error}` : ""}`).join("\n");
+                message.style.whiteSpace = "pre-wrap";
+                try { await app.refreshComboInNodes(); } catch { /* The user can refresh model lists manually. */ }
+            } catch (error) { message.textContent = error.message; }
+            finally {
+                token = undefined;
+                back.disabled = preview.disabled = folder.disabled = false;
+            }
+        };
+        addResizeHandle();
+    }
+
     function buildProgress() {
         header("Model downloads", "Downloads continue while ComfyUI is running.");
         const summary = element("div", "", content);
@@ -319,7 +399,10 @@ export function createDownloadPanel({ app, request, workflowModels, element, for
             details.className = "wm-muted";
             const open = openFolderButton(item, actions, details);
             open.hidden = item.status !== "installed";
-            progressRows.set(`${item.directory}/${item.name}`, { row, status, meter, details, open, size });
+            const access = element("div", "", row);
+            access.hidden = true;
+            hugFaceLink(item, access);
+            progressRows.set(`${item.directory}/${item.name}`, { row, status, meter, details, open, size, access });
         }
         const footer = element("div", "", content);
         footer.className = "wm-foot";
@@ -360,7 +443,9 @@ export function createDownloadPanel({ app, request, workflowModels, element, for
             refs.open.hidden = item.status !== "installed";
             refs.meter.bar.hidden = !active;
             if (active) setBar(refs.meter, percent);
-            refs.details.textContent = item.error || (active ? `${formatSize(item.downloaded || 0)} / ${item.total ? formatSize(item.total) : "total size unknown"} · Downloading…` : "");
+            const needsAccess = item.status === "failed" && /\b(401|403)\b/.test(item.error || "") && refs.access.childElementCount > 0;
+            refs.access.hidden = !needsAccess;
+            refs.details.textContent = needsAccess ? "Hugging Face denied access. Open the file page, sign in and request access if needed. Then download in the browser and use Import from folder." : item.error || (active ? `${formatSize(item.downloaded || 0)} / ${item.total ? formatSize(item.total) : "total size unknown"} · Downloading…` : "");
         }
     }
 
@@ -447,6 +532,10 @@ export function createDownloadPanel({ app, request, workflowModels, element, for
         try {
             const models = workflowModels((app.rootGraph || app.graph).serialize()).map(model => sourceOverrides.get(`${model.directory}/${model.name}`) || model);
             if (!models.length) { message.textContent = "No supported model filenames found in this workflow. Reliable download sources cannot be guessed."; return; }
+            if (!cleanup) {
+                const importButton = element("button", "Import from folder", footer);
+                importButton.onclick = () => showImport(models);
+            }
             const plan = await request("plan", { models });
             if (view !== "review" || !panel.contains(list)) return;
             const choices = [];
@@ -501,6 +590,7 @@ export function createDownloadPanel({ app, request, workflowModels, element, for
                 element("div", `Folder: ${item.destination || item.directory}`, details).className = "wm-folder";
                 element("div", `Source: ${item.url || "not supplied"}`, details).className = "wm-folder";
                 if (item.source) element("div", `Source information: ${item.source}`, details).className = "wm-folder";
+                if (!cleanup) hugFaceLink(item, details);
                 const bottom = element("div", "", row); bottom.className = "wm-card-bottom";
                 const status = element("div", `${item.status}${item.error ? `: ${item.error}` : ""}`, bottom);
                 status.className = `wm-status wm-${item.status}`;

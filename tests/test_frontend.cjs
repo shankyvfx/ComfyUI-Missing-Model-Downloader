@@ -16,5 +16,15 @@ const selected = context.workflowModels(changed);
 assert.equal(selected.length, 1);
 assert.equal(selected[0].name, 'chosen.safetensors', 'Never download stale template selection');
 assert.equal(selected[0].url, '');
+const connected = {
+    type: 'GemmaAPITextEncode',
+    inputs: [{ name: 'ckpt_name', widget: { name: 'ckpt_name' }, link: 5 }],
+    widgets_values: ['stale.safetensors'],
+    widgets_values_named: { ckpt_name: 'stale.safetensors' }
+};
+const loader = { type: 'UNETLoader', widgets_values: ['active.safetensors'] };
+assert.deepEqual(Array.from(context.workflowModels({ nodes: [connected, loader] }), item => item.name), ['active.safetensors']);
+connected.inputs[0].link = null;
+assert.equal(context.workflowModels({ nodes: [connected] })[0].name, 'stale.safetensors');
 console.log('Frontend checks passed: five MiniMax models, nested subgraphs, correct folders, changed selections.');
 

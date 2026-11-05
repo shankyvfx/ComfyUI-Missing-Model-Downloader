@@ -11,6 +11,7 @@ import secrets
 from pathlib import Path
 import shutil
 import struct
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -29,6 +30,7 @@ _catalogue = None
 _size_cache = {}
 _size_lock = threading.Lock()
 _recycle_plans = {}
+_import_plans = {}
 _cleanup_running = False
 
 
@@ -576,6 +578,115 @@ async def recycle_confirm(request):
         if body.get("approved") is not True:
             raise ValueError("Confirm the selected files before moving them to Recycle Bin.")
         return web.json_response(await asyncio.to_thread(confirm_recycle, body.get("token")))
+    except (ValueError, TypeError, OSError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+def import_fingerprint(path):
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns, stat.st_dev, stat.st_ino
+
+
+def prepare_import(folder, models):
+    if not isinstance(folder, str) or not Path(folder).is_absolute():
+        raise ValueError("Enter an absolute folder path on the ComfyUI computer.")
+    root = Path(folder).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("Choose the folder containing the downloaded model files.")
+    items = []
+    for item in plan_models(models):
+        if item["status"] == "installed" or "destination" not in item:
+            continue
+        source = root / item["name"]
+        if source.is_symlink() or not source.is_file() or source.resolve().parent != root:
+            continue
+        target = model_target(item)
+        if target.exists():
+            continue
+        fingerprint = import_fingerprint(source)
+        items.append({**item, "source_path": str(source), "size": fingerprint[0], "fingerprint": fingerprint})
+    if not items:
+        return {"items": []}
+    token = secrets.token_urlsafe(24)
+    with _lock:
+        now = time.monotonic()
+        for key, (created, _) in list(_import_plans.items()):
+            if now - created > 600:
+                del _import_plans[key]
+        if len(_import_plans) >= 20:
+            raise ValueError("Too many open import previews. Try again later.")
+        _import_plans[token] = (now, items)
+    return {"token": token, "items": [{k: item[k] for k in ("name", "directory", "source_path", "destination", "size")} for item in items]}
+
+
+def confirm_import(token):
+    global _cleanup_running
+    with _lock:
+        ensure_idle()
+        saved = _import_plans.pop(token, None)
+        if not saved or time.monotonic() - saved[0] > 600:
+            raise ValueError("Import preview expired. Review the folder again.")
+        _cleanup_running = True
+    results = []
+    try:
+        for item in saved[1]:
+            partial = None
+            try:
+                source = Path(item["source_path"])
+                target = model_target(item)
+                if str(target) != item["destination"]:
+                    raise ValueError("The configured model folder changed. Preview again.")
+                if target.exists() or folder_paths.get_full_path(item["directory"], item["name"]):
+                    results.append({"name": item["name"], "status": "skipped"})
+                    continue
+                if source.is_symlink() or import_fingerprint(source) != item["fingerprint"]:
+                    raise ValueError("Source file changed. Preview again.")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if shutil.disk_usage(target.parent).free < item["size"]:
+                    raise ValueError("Not enough disk space for a copy of this model.")
+                with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".part", delete=False) as output:
+                    partial = Path(output.name)
+                    with source.open("rb") as handle:
+                        if import_fingerprint(source) != item["fingerprint"]:
+                            raise ValueError("Source file changed. Preview again.")
+                        shutil.copyfileobj(handle, output, length=4 * 1024 * 1024)
+                if import_fingerprint(source) != item["fingerprint"] or partial.stat().st_size != item["size"]:
+                    raise ValueError("Source file changed during copying.")
+                check_model_file(partial, item["name"])
+                if item["sha256"]:
+                    with partial.open("rb") as handle:
+                        digest = hashlib.file_digest(handle, "sha256").hexdigest()
+                    if digest.lower() != item["sha256"].lower():
+                        raise ValueError("Model checksum does not match.")
+                if os.name == "nt":
+                    partial.rename(target)
+                else:
+                    os.link(partial, target)
+                results.append({"name": item["name"], "status": "installed"})
+            except (ValueError, TypeError, OSError) as exc:
+                results.append({"name": item["name"], "status": "failed", "error": str(exc)})
+            finally:
+                if partial is not None:
+                    partial.unlink(missing_ok=True)
+        folder_paths.filename_list_cache.clear()
+        return {"items": results}
+    finally:
+        with _lock:
+            _cleanup_running = False
+
+
+@PromptServer.instance.routes.post("/workflow-model-installer/import-plan")
+@PromptServer.instance.routes.post("/workflow-model-installer/import-confirm")
+async def import_models(request):
+    try:
+        if not request.remote or not ipaddress.ip_address(request.remote).is_loopback:
+            return web.json_response({"error": "Folder import is available only on this computer."}, status=403)
+        body = await request.json()
+        if request.path.endswith("/import-plan"):
+            return web.json_response(await asyncio.to_thread(prepare_import, body.get("folder"), body.get("models")))
+        if body.get("approved") is not True or not isinstance(body.get("token"), str):
+            raise ValueError("Review and approve the import before copying files.")
+        return web.json_response(await asyncio.to_thread(confirm_import, body["token"]))
     except (ValueError, TypeError, OSError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
